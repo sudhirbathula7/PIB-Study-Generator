@@ -1,500 +1,460 @@
 """
 PIB Study Generator
-Shared PDF styling configuration.
+Shared visual configuration for Summary and MCQ PDF renderers.
 
-EDIT THIS FILE when you want to change:
-- Fonts
-- Font sizes
-- Colors
-- Headings
-- Margins
-- Spacing
-- Logo
-- Header / footer
-- Question and answer formatting
-
-The generators should NOT contain most visual formatting.
-Instead, they import the settings from this file.
+Design target:
+- A4
+- Compact 8mm top/bottom margins
+- 14mm left/right margins
+- Compact header
+- 79% study-content column
+- 21% Notes column
+- Thin blue divider
+- Dashed Notes separator
+- Dense, readable study layout
 """
 
 from pathlib import Path
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
 
 
 # ============================================================
-# PROJECT PATHS
+# PAGE
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-ASSETS_DIR = PROJECT_ROOT / "assets"
-FONTS_DIR = PROJECT_ROOT / "fonts"
-OUTPUT_DIR = PROJECT_ROOT / "output"
-
-LOGO_PATH = ASSETS_DIR / "brand_logo.png"
-
-
-# ============================================================
-# FONT CONFIGURATION
-# ============================================================
-#
-# OPTION 1:
-# Use standard ReportLab fonts:
-#
-#     "Helvetica"
-#     "Helvetica-Bold"
-#     "Times-Roman"
-#     "Times-Bold"
-#     "Courier"
-#
-# OPTION 2:
-# Put your .ttf fonts inside:
-#
-#     fonts/
-#
-# and specify their paths below.
-#
-# Example:
-#
-# REGULAR_FONT_FILE = FONTS_DIR / "NotoSans-Regular.ttf"
-# BOLD_FONT_FILE = FONTS_DIR / "NotoSans-Bold.ttf"
-#
-# For now we use standard fonts so the program works
-# immediately without requiring additional font files.
-# ============================================================
-
-FONT_NAME = "Helvetica"
-FONT_NAME_BOLD = "Helvetica-Bold"
-FONT_NAME_ITALIC = "Helvetica-Oblique"
-FONT_NAME_BOLD_ITALIC = "Helvetica-BoldOblique"
-
-# If you later want custom fonts, set these to actual .ttf files.
-REGULAR_FONT_FILE = None
-BOLD_FONT_FILE = None
-ITALIC_FONT_FILE = None
-BOLD_ITALIC_FONT_FILE = None
-
-
-# ============================================================
-# DOCUMENT TITLE
-# ============================================================
-
-TITLE_TEXT = "PIB Study Material"
-
-TITLE_FONT = FONT_NAME_BOLD
-TITLE_FONT_SIZE = 20
-
-TITLE_COLOR = "#1F2937"
-
-TITLE_ALIGNMENT = "CENTER"
-
-TITLE_SPACE_BEFORE = 0
-TITLE_SPACE_AFTER = 12
-
-
-# ============================================================
-# SUBTITLE
-# ============================================================
-
-SUBTITLE_FONT = FONT_NAME
-SUBTITLE_FONT_SIZE = 11
-
-SUBTITLE_COLOR = "#4B5563"
-
-SUBTITLE_ALIGNMENT = "CENTER"
-
-SUBTITLE_SPACE_BEFORE = 0
-SUBTITLE_SPACE_AFTER = 16
-
-
-# ============================================================
-# MAIN SECTION HEADINGS
-# ============================================================
-
-SECTION_HEADING_FONT = FONT_NAME_BOLD
-SECTION_HEADING_SIZE = 15
-
-SECTION_HEADING_COLOR = "#111827"
-
-SECTION_HEADING_ALIGNMENT = "LEFT"
-
-SECTION_HEADING_SPACE_BEFORE = 14
-SECTION_HEADING_SPACE_AFTER = 8
-
-SECTION_HEADING_BORDER = False
-
-SECTION_HEADING_BORDER_COLOR = "#D1D5DB"
-
-
-# ============================================================
-# SUBSECTION HEADINGS
-# ============================================================
-
-SUBHEADING_FONT = FONT_NAME_BOLD
-SUBHEADING_SIZE = 12
-
-SUBHEADING_COLOR = "#1F2937"
-
-SUBHEADING_ALIGNMENT = "LEFT"
-
-SUBHEADING_SPACE_BEFORE = 10
-SUBHEADING_SPACE_AFTER = 5
-
-
-# ============================================================
-# BODY TEXT
-# ============================================================
-
-BODY_FONT = FONT_NAME
-BODY_FONT_SIZE = 10
-
-BODY_COLOR = "#111827"
-
-BODY_ALIGNMENT = "JUSTIFY"
-
-BODY_LEADING = 14
-
-BODY_SPACE_BEFORE = 0
-BODY_SPACE_AFTER = 6
-
-
-# ============================================================
-# SMALL / SECONDARY TEXT
-# ============================================================
-
-SMALL_FONT = FONT_NAME
-SMALL_FONT_SIZE = 8.5
-
-SMALL_COLOR = "#4B5563"
-
-SMALL_LEADING = 11
-
-
-# ============================================================
-# QUESTION CONFIGURATION
-# ============================================================
-
-QUESTION_FONT = FONT_NAME_BOLD
-QUESTION_FONT_SIZE = 11
-
-QUESTION_COLOR = "#111827"
-
-QUESTION_LEADING = 15
-
-QUESTION_SPACE_BEFORE = 10
-QUESTION_SPACE_AFTER = 5
-
-
-# ============================================================
-# QUESTION NUMBER
-# ============================================================
-
-QUESTION_NUMBER_FONT = FONT_NAME_BOLD
-QUESTION_NUMBER_SIZE = 11
-
-QUESTION_NUMBER_COLOR = "#111827"
-
-QUESTION_NUMBER_FORMAT = "{number}."
-
-
-# ============================================================
-# OPTION CONFIGURATION
-# ============================================================
-
-OPTION_FONT = FONT_NAME
-OPTION_FONT_SIZE = 10
-
-OPTION_COLOR = "#111827"
-
-OPTION_LEADING = 14
-
-OPTION_INDENT = 18
-
-OPTION_SPACE_BEFORE = 1
-OPTION_SPACE_AFTER = 2
-
-# Example:
-#
-# A. Option one
-# B. Option two
-# C. Option three
-# D. Option four
-
-OPTION_LABELS = [
-    "A",
-    "B",
-    "C",
-    "D",
-]
-
-
-# ============================================================
-# ANSWER CONFIGURATION
-# ============================================================
-
-ANSWER_LABEL = "Answer"
-
-ANSWER_FONT = FONT_NAME_BOLD
-ANSWER_FONT_SIZE = 10
-
-ANSWER_COLOR = "#111827"
-
-ANSWER_LEADING = 14
-
-ANSWER_SPACE_BEFORE = 5
-ANSWER_SPACE_AFTER = 3
-
-
-# ============================================================
-# EXPLANATION CONFIGURATION
-# ============================================================
-
-EXPLANATION_LABEL = "Explanation"
-
-EXPLANATION_FONT = FONT_NAME
-EXPLANATION_FONT_SIZE = 9.5
-
-EXPLANATION_COLOR = "#374151"
-
-EXPLANATION_LEADING = 13
-
-EXPLANATION_SPACE_BEFORE = 2
-EXPLANATION_SPACE_AFTER = 8
-
-
-# ============================================================
-# SUMMARY CONFIGURATION
-# ============================================================
-
-SUMMARY_TITLE = "Summary"
-
-SUMMARY_TITLE_FONT = FONT_NAME_BOLD
-SUMMARY_TITLE_SIZE = 18
-
-SUMMARY_TITLE_COLOR = "#111827"
-
-SUMMARY_SECTION_FONT = FONT_NAME_BOLD
-SUMMARY_SECTION_SIZE = 13
-
-SUMMARY_SECTION_COLOR = "#1F2937"
-
-SUMMARY_BODY_FONT = FONT_NAME
-SUMMARY_BODY_SIZE = 10
-
-SUMMARY_BODY_COLOR = "#111827"
-
-SUMMARY_BODY_LEADING = 14
-
-
-# ============================================================
-# TABLE CONFIGURATION
-# ============================================================
-
-TABLE_FONT = FONT_NAME
-TABLE_FONT_SIZE = 9
-
-TABLE_HEADER_FONT = FONT_NAME_BOLD
-TABLE_HEADER_SIZE = 9
-
-TABLE_TEXT_COLOR = "#111827"
-TABLE_HEADER_TEXT_COLOR = "#111827"
-
-TABLE_HEADER_BACKGROUND = "#E5E7EB"
-TABLE_BORDER_COLOR = "#9CA3AF"
-
-TABLE_BORDER_WIDTH = 0.5
-
-TABLE_CELL_PADDING = 5
-
-
-# ============================================================
-# PAGE CONFIGURATION
-# ============================================================
-
-PAGE_SIZE = "A4"
-
-PAGE_MARGIN_LEFT = 42
-PAGE_MARGIN_RIGHT = 42
-PAGE_MARGIN_TOP = 45
-PAGE_MARGIN_BOTTOM = 45
+PAGE_SIZE = A4
+
+MARGIN_TOP = 8 * mm
+MARGIN_BOTTOM = 8 * mm
+MARGIN_LEFT = 14 * mm
+MARGIN_RIGHT = 14 * mm
 
 
 # ============================================================
 # HEADER
 # ============================================================
 
-SHOW_HEADER = False
+HEADER_LOGO_WIDTH = 44
+HEADER_LOGO_HEIGHT = 44
 
-HEADER_TEXT = "PIB Study Generator"
+HEADER_LOGO_CELL_WIDTH = 52
 
-HEADER_FONT = FONT_NAME
-HEADER_FONT_SIZE = 8
+HEADER_TITLE_SIZE = 14.5
+HEADER_TITLE_LEADING = 17
 
-HEADER_COLOR = "#6B7280"
+HEADER_TITLE_COLOR = colors.HexColor("#1A365D")
 
-HEADER_ALIGNMENT = "RIGHT"
+HEADER_DIVIDER_COLOR = colors.HexColor("#2B6CB0")
+HEADER_DIVIDER_WIDTH = 2
+
+
+# ============================================================
+# CONTENT / NOTES COLUMNS
+# ============================================================
+
+CONTENT_COLUMN_RATIO = 0.79
+NOTES_COLUMN_RATIO = 0.21
+
+CONTENT_RIGHT_PADDING = 10
+NOTES_LEFT_PADDING = 8
+
+NOTES_SEPARATOR_COLOR = colors.HexColor("#CBD5E0")
+NOTES_SEPARATOR_WIDTH = 0.8
+
+NOTES_TEXT_COLOR = colors.HexColor("#A0AEC0")
+NOTES_TEXT_SIZE = 7.5
+
+
+# ============================================================
+# BODY
+# ============================================================
+
+BODY_FONT = "Helvetica"
+BODY_BOLD_FONT = "Helvetica-Bold"
+
+BODY_SIZE = 10
+BODY_LEADING = 13.5
+
+BODY_COLOR = colors.HexColor("#1A202C")
+
+
+# ============================================================
+# HEADINGS
+# ============================================================
+
+H1_SIZE = 11
+H1_LEADING = 13
+
+H2_SIZE = 11
+H2_LEADING = 13
+
+H3_SIZE = 10
+H3_LEADING = 12
+
+H4_SIZE = 9.5
+H4_LEADING = 11
+
+
+H1_COLOR = colors.HexColor("#1A365D")
+H2_COLOR = colors.HexColor("#2B6CB0")
+H3_COLOR = colors.HexColor("#2C5282")
+H4_COLOR = colors.HexColor("#9C4221")
+
+
+# ============================================================
+# SPACING
+# ============================================================
+
+PARAGRAPH_SPACE_BEFORE = 2
+PARAGRAPH_SPACE_AFTER = 3
+
+BULLET_SPACE_AFTER = 2
+SUB_BULLET_SPACE_AFTER = 2
+
+H1_SPACE_BEFORE = 5
+H1_SPACE_AFTER = 2
+
+H2_SPACE_BEFORE = 5
+H2_SPACE_AFTER = 2
+
+H3_SPACE_BEFORE = 4
+H3_SPACE_AFTER = 2
+
+H4_SPACE_BEFORE = 3
+H4_SPACE_AFTER = 1
+
+
+# ============================================================
+# BULLETS
+# ============================================================
+
+MAIN_BULLET = "•"
+SUB_BULLET = "○"
+
+MAIN_BULLET_LEFT = 14
+MAIN_BULLET_FIRST = 0
+
+SUB_BULLET_LEFT = 25
+SUB_BULLET_FIRST = 0
+
+
+# ============================================================
+# TABLES
+# ============================================================
+
+TABLE_FONT_SIZE = 8.5
+TABLE_LEADING = 10.4
+
+TABLE_BORDER_COLOR = colors.HexColor("#CBD5E0")
+TABLE_HEADER_BACKGROUND = colors.HexColor("#EBF8FF")
+TABLE_HEADER_COLOR = colors.HexColor("#2C5282")
+
+TABLE_CELL_PADDING_TOP = 3
+TABLE_CELL_PADDING_BOTTOM = 3
+TABLE_CELL_PADDING_LEFT = 5
+TABLE_CELL_PADDING_RIGHT = 5
+
+
+# ============================================================
+# BLOCKQUOTES / CALLOUTS
+# ============================================================
+
+BLOCKQUOTE_BACKGROUND = colors.HexColor("#F7FAFC")
+BLOCKQUOTE_BORDER = colors.HexColor("#3182CE")
+
+BLOCKQUOTE_FONT_SIZE = 9
+BLOCKQUOTE_LEADING = 11.5
+
+
+# ============================================================
+# MCQ
+# ============================================================
+
+MCQ_QUESTION_SIZE = 10
+MCQ_QUESTION_LEADING = 13.2
+
+MCQ_OPTION_SIZE = 9.5
+MCQ_OPTION_LEADING = 12.2
+
+MCQ_STATEMENT_SIZE = 9.5
+MCQ_STATEMENT_LEADING = 12.2
+
+MCQ_ANSWER_SIZE = 9
+MCQ_ANSWER_LEADING = 11.5
+
+MCQ_EXPLANATION_SIZE = 9
+MCQ_EXPLANATION_LEADING = 11.5
+
+MCQ_OPTION_GAP = 4
+
+MCQ_BLOCK_SPACE_BEFORE = 4
+MCQ_BLOCK_SPACE_AFTER = 5
+
+MCQ_ANSWER_BACKGROUND = colors.HexColor("#F0FFF4")
+MCQ_ANSWER_BORDER = colors.HexColor("#9AE6B4")
+
+MCQ_EXPLANATION_BACKGROUND = colors.HexColor("#F7FAFC")
+MCQ_EXPLANATION_BORDER = colors.HexColor("#CBD5E0")
 
 
 # ============================================================
 # FOOTER
 # ============================================================
 
-SHOW_FOOTER = True
-
-FOOTER_TEXT = "PIB Study Generator"
-
-FOOTER_FONT = FONT_NAME
-FOOTER_FONT_SIZE = 8
-
-FOOTER_COLOR = "#6B7280"
-
-FOOTER_ALIGNMENT = "CENTER"
-
-SHOW_PAGE_NUMBER = True
-
-PAGE_NUMBER_FORMAT = "Page {page}"
+FOOTER_FONT_SIZE = 7
+FOOTER_COLOR = colors.HexColor("#A0AEC0")
 
 
 # ============================================================
-# LOGO
+# BRAND
 # ============================================================
 
-SHOW_LOGO = True
-
-LOGO_WIDTH = 90
-LOGO_HEIGHT = 90
-
-LOGO_ALIGNMENT = "CENTER"
-
-LOGO_SPACE_BEFORE = 0
-LOGO_SPACE_AFTER = 10
+BRAND_NAME = "PIB Study Material"
 
 
 # ============================================================
-# DIVIDERS
+# PATHS
 # ============================================================
 
-SHOW_SECTION_DIVIDERS = False
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-DIVIDER_COLOR = "#D1D5DB"
+ASSETS_DIR = PROJECT_ROOT / "assets"
 
-DIVIDER_WIDTH = 0.5
-
-DIVIDER_SPACE_BEFORE = 5
-DIVIDER_SPACE_AFTER = 8
+LOGO_PATH = ASSETS_DIR / "brand_logo.png"
 
 
 # ============================================================
-# GENERAL SPACING
+# HELPERS
 # ============================================================
 
-PARAGRAPH_SPACE = 6
-
-LINE_SPACING = 14
-
-LIST_INDENT = 18
-
-LIST_LEFT_INDENT = 18
-
-LIST_RIGHT_INDENT = 0
-
-
-# ============================================================
-# COLORS
-# ============================================================
-
-COLOR_BLACK = "#000000"
-COLOR_WHITE = "#FFFFFF"
-
-COLOR_DARK = "#111827"
-COLOR_GRAY = "#6B7280"
-COLOR_LIGHT_GRAY = "#E5E7EB"
-
-COLOR_BLUE = "#2563EB"
-COLOR_GREEN = "#15803D"
-COLOR_RED = "#DC2626"
-COLOR_ORANGE = "#EA580C"
-
-
-# ============================================================
-# PDF METADATA
-# ============================================================
-
-PDF_AUTHOR = "PIB Study Generator"
-
-PDF_TITLE_MCQ = "PIB Study Generator - MCQs"
-
-PDF_TITLE_SUMMARY = "PIB Study Generator - Summary"
-
-PDF_SUBJECT = "UPSC PIB Study Material"
-
-
-# ============================================================
-# EASY CUSTOMIZATION PRESETS
-# ============================================================
-#
-# You normally do NOT need to change these.
-#
-# If you want a different visual theme later, we can modify
-# this section and the rest of the generators will automatically
-# use the new settings.
-# ============================================================
-
-THEME_NAME = "Clean Academic"
-
-USE_ROUNDED_BOXES = False
-
-USE_SHADOWS = False
-
-USE_BACKGROUND_COLOR = False
-
-PAGE_BACKGROUND_COLOR = "#FFFFFF"
-
-
-# ============================================================
-# HELPER FUNCTIONS
-# ============================================================
-
-def hex_to_rgb(hex_color):
+def hex_to_rgb(hex_color: str):
     """
-    Convert a hex color such as '#1F2937' into RGB values
-    between 0 and 1.
-
-    Example:
-
-        hex_to_rgb("#FF0000")
-
-    returns:
-
-        (1.0, 0.0, 0.0)
+    Convert #RRGGBB to an RGB tuple in the 0-1 range.
     """
+    value = hex_color.lstrip("#")
 
-    hex_color = hex_color.strip().lstrip("#")
+    if len(value) != 6:
+        raise ValueError(f"Invalid hex colour: {hex_color}")
 
-    if len(hex_color) != 6:
-        raise ValueError(
-            f"Invalid hex color: {hex_color}. "
-            "Use format '#RRGGBB'."
-        )
-
-    red = int(hex_color[0:2], 16) / 255
-    green = int(hex_color[2:4], 16) / 255
-    blue = int(hex_color[4:6], 16) / 255
-
-    return red, green, blue
+    return (
+        int(value[0:2], 16) / 255.0,
+        int(value[2:4], 16) / 255.0,
+        int(value[4:6], 16) / 255.0,
+    )
 
 
-def get_font_file(font_file):
+def mm_to_pt(value):
     """
-    Return the font path if configured and available.
-    Otherwise return None.
+    Millimetres to ReportLab points.
     """
+    return value * mm
 
-    if font_file is None:
-        return None
 
-    path = Path(font_file)
-
-    if path.exists():
-        return path
+def get_logo_path():
+    """
+    Return the configured logo path if available.
+    """
+    if LOGO_PATH.exists():
+        return LOGO_PATH
 
     return None
+
+
+def get_font_file(font_name):
+    """
+    Kept for compatibility with older generator code.
+    Helvetica is built into ReportLab, so no external font file
+    is required.
+    """
+    return None
+
+
+# ============================================================
+# SHARED PARAGRAPH STYLES
+# ============================================================
+
+BODY_STYLE = ParagraphStyle(
+    "PIBBody",
+    fontName=BODY_FONT,
+    fontSize=BODY_SIZE,
+    leading=BODY_LEADING,
+    textColor=BODY_COLOR,
+    alignment=TA_LEFT,
+    spaceBefore=PARAGRAPH_SPACE_BEFORE,
+    spaceAfter=PARAGRAPH_SPACE_AFTER,
+    allowWidows=0,
+    allowOrphans=0,
+)
+
+
+H1_STYLE = ParagraphStyle(
+    "PIBH1",
+    parent=BODY_STYLE,
+    fontName=BODY_BOLD_FONT,
+    fontSize=H1_SIZE,
+    leading=H1_LEADING,
+    textColor=H1_COLOR,
+    spaceBefore=H1_SPACE_BEFORE,
+    spaceAfter=H1_SPACE_AFTER,
+    borderColor=colors.HexColor("#E2E8F0"),
+    borderWidth=0,
+    borderPadding=0,
+)
+
+
+H2_STYLE = ParagraphStyle(
+    "PIBH2",
+    parent=BODY_STYLE,
+    fontName=BODY_BOLD_FONT,
+    fontSize=H2_SIZE,
+    leading=H2_LEADING,
+    textColor=H2_COLOR,
+    spaceBefore=H2_SPACE_BEFORE,
+    spaceAfter=H2_SPACE_AFTER,
+)
+
+
+H3_STYLE = ParagraphStyle(
+    "PIBH3",
+    parent=BODY_STYLE,
+    fontName=BODY_BOLD_FONT,
+    fontSize=H3_SIZE,
+    leading=H3_LEADING,
+    textColor=H3_COLOR,
+    spaceBefore=H3_SPACE_BEFORE,
+    spaceAfter=H3_SPACE_AFTER,
+)
+
+
+H4_STYLE = ParagraphStyle(
+    "PIBH4",
+    parent=BODY_STYLE,
+    fontName=BODY_BOLD_FONT,
+    fontSize=H4_SIZE,
+    leading=H4_LEADING,
+    textColor=H4_COLOR,
+    spaceBefore=H4_SPACE_BEFORE,
+    spaceAfter=H4_SPACE_AFTER,
+)
+
+
+BULLET_STYLE = ParagraphStyle(
+    "PIBBullet",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=BODY_SIZE,
+    leading=BODY_LEADING,
+    leftIndent=MAIN_BULLET_LEFT,
+    firstLineIndent=-MAIN_BULLET_LEFT,
+    spaceBefore=0,
+    spaceAfter=BULLET_SPACE_AFTER,
+)
+
+
+SUB_BULLET_STYLE = ParagraphStyle(
+    "PISubBullet",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=BODY_SIZE,
+    leading=BODY_LEADING,
+    leftIndent=SUB_BULLET_LEFT,
+    firstLineIndent=-SUB_BULLET_LEFT,
+    spaceBefore=0,
+    spaceAfter=SUB_BULLET_SPACE_AFTER,
+)
+
+
+TABLE_STYLE = ParagraphStyle(
+    "PIBTable",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=TABLE_FONT_SIZE,
+    leading=TABLE_LEADING,
+    spaceBefore=0,
+    spaceAfter=0,
+)
+
+
+TABLE_HEADER_STYLE = ParagraphStyle(
+    "PIBTableHeader",
+    parent=TABLE_STYLE,
+    fontName=BODY_BOLD_FONT,
+    textColor=TABLE_HEADER_COLOR,
+)
+
+
+MCQ_QUESTION_STYLE = ParagraphStyle(
+    "PIBMCQQuestion",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=MCQ_QUESTION_SIZE,
+    leading=MCQ_QUESTION_LEADING,
+    spaceBefore=0,
+    spaceAfter=3,
+)
+
+
+MCQ_OPTION_STYLE = ParagraphStyle(
+    "PIBMCQOption",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=MCQ_OPTION_SIZE,
+    leading=MCQ_OPTION_LEADING,
+    spaceBefore=0,
+    spaceAfter=1,
+)
+
+
+MCQ_STATEMENT_STYLE = ParagraphStyle(
+    "PIBMCQStatement",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=MCQ_STATEMENT_SIZE,
+    leading=MCQ_STATEMENT_LEADING,
+    leftIndent=12,
+    firstLineIndent=-12,
+    spaceBefore=0,
+    spaceAfter=1,
+)
+
+
+MCQ_ANSWER_STYLE = ParagraphStyle(
+    "PIBMCQAnswer",
+    parent=BODY_STYLE,
+    fontName=BODY_BOLD_FONT,
+    fontSize=MCQ_ANSWER_SIZE,
+    leading=MCQ_ANSWER_LEADING,
+    textColor=colors.HexColor("#22543D"),
+    spaceBefore=0,
+    spaceAfter=0,
+)
+
+
+MCQ_EXPLANATION_STYLE = ParagraphStyle(
+    "PIBMCQExplanation",
+    parent=BODY_STYLE,
+    fontName=BODY_FONT,
+    fontSize=MCQ_EXPLANATION_SIZE,
+    leading=MCQ_EXPLANATION_LEADING,
+    spaceBefore=0,
+    spaceAfter=0,
+)
+
+
+# ============================================================
+# BACKWARD-COMPATIBILITY ALIASES
+# ============================================================
+
+PAGE_MARGINS = {
+    "top": MARGIN_TOP,
+    "bottom": MARGIN_BOTTOM,
+    "left": MARGIN_LEFT,
+    "right": MARGIN_RIGHT,
+}
+
+CONTENT_RATIO = CONTENT_COLUMN_RATIO
+NOTES_RATIO = NOTES_COLUMN_RATIO

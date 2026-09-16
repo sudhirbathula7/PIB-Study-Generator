@@ -1,398 +1,163 @@
 """
 PIB Study Generator
-Combined PDF Generator
+PDF merger.
 
 Combines:
-
     1. Summary PDF
     2. Quick Revision PDF
     3. MCQ PDF
 
-into one Complete PDF.
-
-The visual appearance of the individual documents is controlled
-by:
-
-    tools/style_config.py
+The individual PDFs are responsible for their own layout.
+This file ONLY merges them in the required order.
 """
 
-from __future__ import annotations
-
-import os
-import shutil
-import subprocess
-import webbrowser
 from pathlib import Path
+import sys
+import webbrowser
 
-
-try:
-    from . import style_config as style
-except ImportError:
-    import style_config as style
+from pypdf import PdfReader, PdfWriter
 
 
 # ============================================================
-# PDF HELPERS
+# OPEN PDF
 # ============================================================
 
-def open_pdf(file_path) -> None:
+def open_pdf(path):
     """
-    Open a PDF using the operating system's default PDF viewer.
+    Open the generated PDF using the default application.
     """
-
-    absolute_path = os.path.abspath(file_path)
-
-    if hasattr(os, "startfile"):
-        try:
-            os.startfile(absolute_path)
-            return
-        except Exception:
-            pass
 
     try:
         webbrowser.open(
-            f"file://{absolute_path}"
+            Path(path).resolve().as_uri()
         )
     except Exception:
         pass
 
 
-def check_pdf(path) -> bool:
+# ============================================================
+# VALIDATE PDF
+# ============================================================
+
+def validate_pdf(path):
     """
-    Check whether a PDF exists and is not empty.
+    Validate that a PDF exists and can be read.
     """
 
     path = Path(path)
 
-    return (
-        path.exists()
-        and path.is_file()
-        and path.stat().st_size > 0
-    )
+    if not path.exists():
+        raise FileNotFoundError(
+            f"PDF not found: {path}"
+        )
 
-
-# ============================================================
-# MERGE USING PYPDF
-# ============================================================
-
-def merge_with_pypdf(
-    pdf_files: list[Path],
-    output_path: Path,
-) -> bool:
-    """
-    Merge PDFs using pypdf.
-
-    The PDFs are merged in exactly the order supplied
-    in pdf_files.
-    """
+    if path.stat().st_size == 0:
+        raise ValueError(
+            f"PDF is empty: {path}"
+        )
 
     try:
-        from pypdf import PdfReader, PdfWriter
-    except ImportError:
-        return False
-
-    try:
-
-        writer = PdfWriter()
-
-        for pdf_file in pdf_files:
-
-            reader = PdfReader(
-                str(pdf_file)
-            )
-
-            for page in reader.pages:
-                writer.add_page(page)
-
-        with open(
-            output_path,
-            "wb",
-        ) as output_file:
-
-            writer.write(
-                output_file
-            )
-
-        return check_pdf(output_path)
-
-    except Exception as error:
-
-        print()
-        print(
-            "pypdf merge failed:"
+        reader = PdfReader(
+            str(path)
         )
 
-        print(error)
+        if len(reader.pages) == 0:
+            raise ValueError(
+                f"PDF contains no pages: {path}"
+            )
 
-        return False
+    except Exception as exc:
+        raise ValueError(
+            f"Unable to read PDF: {path}\n{exc}"
+        ) from exc
+
+    return path
 
 
 # ============================================================
-# MERGE USING GHOSTSCRIPT
-# ============================================================
-
-def find_ghostscript() -> str | None:
-    """
-    Find Ghostscript if it is installed.
-
-    This is only a fallback.
-    """
-
-    possible_commands = [
-        "gswin64c",
-        "gswin32c",
-        "gs",
-    ]
-
-    for command in possible_commands:
-
-        executable = shutil.which(
-            command
-        )
-
-        if executable:
-            return executable
-
-    return None
-
-
-def merge_with_ghostscript(
-    pdf_files: list[Path],
-    output_path: Path,
-) -> bool:
-    """
-    Merge PDFs using Ghostscript.
-    """
-
-    ghostscript = find_ghostscript()
-
-    if not ghostscript:
-        return False
-
-    command = [
-        ghostscript,
-        "-dBATCH",
-        "-dNOPAUSE",
-        "-sDEVICE=pdfwrite",
-        f"-sOutputFile={output_path}",
-    ]
-
-    command.extend(
-        str(pdf)
-        for pdf in pdf_files
-    )
-
-    try:
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode != 0:
-
-            print()
-            print(
-                "Ghostscript merge failed:"
-            )
-
-            print(result.stderr)
-
-            return False
-
-        return check_pdf(output_path)
-
-    except Exception as error:
-
-        print()
-        print(
-            "Could not execute Ghostscript:"
-        )
-
-        print(error)
-
-        return False
-
-
-# ============================================================
-# MAIN MERGE FUNCTION
+# MERGE
 # ============================================================
 
 def generate_combined_pdf(
     summary_pdf,
     quick_revision_pdf,
     mcq_pdf,
-    output_path=None,
-    open_after=True,
+    output_path,
+    open_after=False,
 ):
     """
-    Combine Summary + Quick Revision + MCQs.
+    Merge the three generated PDFs in this exact order:
 
-    Order:
-
-        1. Summary
-        2. Quick Revision
-        3. MCQs
-
-    Parameters
-    ----------
-    summary_pdf:
-        Path to Summary PDF.
-
-    quick_revision_pdf:
-        Path to Quick Revision PDF.
-
-    mcq_pdf:
-        Path to MCQ PDF.
-
-    output_path:
-        Optional output PDF path.
-
-    open_after:
-        Automatically open the finished PDF.
-
-    Returns
-    -------
-    Path
-        Complete PDF path.
+        Summary
+        Quick Revision
+        MCQs
     """
 
-    summary_pdf = Path(summary_pdf)
-    quick_revision_pdf = Path(quick_revision_pdf)
-    mcq_pdf = Path(mcq_pdf)
+    summary_pdf = validate_pdf(
+        summary_pdf
+    )
 
-    # --------------------------------------------------------
-    # Validate all three PDFs
-    # --------------------------------------------------------
+    quick_revision_pdf = validate_pdf(
+        quick_revision_pdf
+    )
 
-    if not check_pdf(summary_pdf):
+    mcq_pdf = validate_pdf(
+        mcq_pdf
+    )
 
-        raise FileNotFoundError(
-            "Summary PDF not found or empty:\n"
-            f"{summary_pdf}"
-        )
-
-    if not check_pdf(quick_revision_pdf):
-
-        raise FileNotFoundError(
-            "Quick Revision PDF not found or empty:\n"
-            f"{quick_revision_pdf}"
-        )
-
-    if not check_pdf(mcq_pdf):
-
-        raise FileNotFoundError(
-            "MCQ PDF not found or empty:\n"
-            f"{mcq_pdf}"
-        )
-
-    # --------------------------------------------------------
-    # Default output
-    # --------------------------------------------------------
-
-    if output_path is None:
-
-        output_path = (
-            summary_pdf.parent
-            / f"{summary_pdf.stem}_complete.pdf"
-        )
-
-    output_path = Path(output_path)
+    output_path = Path(
+        output_path
+    )
 
     output_path.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    # --------------------------------------------------------
-    # Exact document order
-    # --------------------------------------------------------
+    writer = PdfWriter()
 
-    pdf_files = [
+    input_files = [
         summary_pdf,
         quick_revision_pdf,
         mcq_pdf,
     ]
 
-    print()
-    print(
-        "Combining PDFs..."
-    )
+    for pdf_path in input_files:
 
-    print(
-        f"1. Summary:        {summary_pdf}"
-    )
-
-    print(
-        f"2. Quick Revision: {quick_revision_pdf}"
-    )
-
-    print(
-        f"3. MCQs:           {mcq_pdf}"
-    )
-
-    print(
-        f"Output:            {output_path}"
-    )
-
-    # --------------------------------------------------------
-    # Method 1: pypdf
-    # --------------------------------------------------------
-
-    if merge_with_pypdf(
-        pdf_files,
-        output_path,
-    ):
-
-        print()
-        print(
-            "Complete PDF created successfully."
+        reader = PdfReader(
+            str(pdf_path)
         )
 
-        print(
-            output_path.resolve()
+        for page in reader.pages:
+            writer.add_page(
+                page
+            )
+
+    # Metadata
+    writer.add_metadata(
+        {
+            "/Title": "PIB Study Material",
+            "/Author": "PIB Study Generator",
+            "/Creator": "PIB Study Generator",
+            "/Producer": "PIB Study Generator",
+        }
+    )
+
+    with output_path.open(
+        "wb"
+    ) as output_file:
+
+        writer.write(
+            output_file
         )
 
-        if open_after:
-            open_pdf(output_path)
-
-        return output_path
-
-    # --------------------------------------------------------
-    # Method 2: Ghostscript
-    # --------------------------------------------------------
-
-    if merge_with_ghostscript(
-        pdf_files,
-        output_path,
-    ):
-
-        print()
-        print(
-            "Complete PDF created successfully "
-            "using Ghostscript."
+    if open_after:
+        open_pdf(
+            output_path
         )
 
-        print(
-            output_path.resolve()
-        )
-
-        if open_after:
-            open_pdf(output_path)
-
-        return output_path
-
-    # --------------------------------------------------------
-    # No merge engine available
-    # --------------------------------------------------------
-
-    raise RuntimeError(
-        "\n"
-        "Unable to combine the PDFs.\n\n"
-        "Install pypdf with:\n"
-        "    python -m pip install pypdf\n\n"
-        "Then run the generator again.\n"
+    return str(
+        output_path
     )
 
 
@@ -400,79 +165,59 @@ def generate_combined_pdf(
 # COMPATIBILITY ALIASES
 # ============================================================
 
-generate_combined = generate_combined_pdf
-combine_pdfs = generate_combined_pdf
+generate_combined = (
+    generate_combined_pdf
+)
+
+merge_pdfs = (
+    generate_combined_pdf
+)
 
 
 # ============================================================
-# COMMAND-LINE INTERFACE
+# COMMAND LINE
 # ============================================================
-
-def main():
-    """
-    Command-line usage:
-
-        python tools/generate_combined.py \
-            summary.pdf \
-            quick_revision.pdf \
-            mcqs.pdf
-
-    Or:
-
-        python tools/generate_combined.py \
-            summary.pdf \
-            quick_revision.pdf \
-            mcqs.pdf \
-            complete.pdf
-    """
-
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description=(
-            "Combine Summary, Quick Revision and MCQ PDFs "
-            "into one Complete PDF."
-        )
-    )
-
-    parser.add_argument(
-        "summary_pdf",
-        help="Path to the Summary PDF.",
-    )
-
-    parser.add_argument(
-        "quick_revision_pdf",
-        help="Path to the Quick Revision PDF.",
-    )
-
-    parser.add_argument(
-        "mcq_pdf",
-        help="Path to the MCQ PDF.",
-    )
-
-    parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-        help="Optional Complete PDF output path.",
-    )
-
-    parser.add_argument(
-        "--no-open",
-        action="store_true",
-        help="Do not automatically open the PDF.",
-    )
-
-    args = parser.parse_args()
-
-    generate_combined_pdf(
-        summary_pdf=args.summary_pdf,
-        quick_revision_pdf=args.quick_revision_pdf,
-        mcq_pdf=args.mcq_pdf,
-        output_path=args.output,
-        open_after=not args.no_open,
-    )
-
 
 if __name__ == "__main__":
-    main()
+
+    if len(sys.argv) < 5:
+
+        print(
+            "Usage:"
+        )
+
+        print(
+            "python tools/generate_combined.py "
+            "SUMMARY.pdf QUICK_REVISION.pdf "
+            "MCQS.pdf OUTPUT.pdf"
+        )
+
+        raise SystemExit(1)
+
+    summary_path = Path(
+        sys.argv[1]
+    )
+
+    quick_revision_path = Path(
+        sys.argv[2]
+    )
+
+    mcq_path = Path(
+        sys.argv[3]
+    )
+
+    output_path = Path(
+        sys.argv[4]
+    )
+
+    result = generate_combined_pdf(
+        summary_pdf=summary_path,
+        quick_revision_pdf=quick_revision_path,
+        mcq_pdf=mcq_path,
+        output_path=output_path,
+        open_after=False,
+    )
+
+    print(
+        f"Generated: {result}"
+    )

@@ -1,990 +1,1510 @@
 """
 PIB Study Generator
-MCQ PDF Generator
+Compact MCQ PDF renderer.
 
-This file is intentionally kept separate from the visual configuration.
+IMPORTANT:
+The MCQ renderer deliberately uses the SAME page geometry as the
+Summary / Quick Revision renderer.
 
-To change:
-    - fonts
-    - font sizes
-    - headings
-    - colors
-    - margins
-    - spacing
-    - logo
-    - header/footer
+Only the content formatting differs.
 
-edit:
-
-    tools/style_config.py
-
-The generator itself should mainly handle CONTENT and PDF generation.
+Layout:
+- A4
+- 8mm top/bottom
+- 14mm left/right
+- compact PIB header
+- blue divider
+- 79% study column
+- 21% Notes column
+- dashed Notes separator
 """
 
-from __future__ import annotations
-
-import base64
-import os
-import re
-import webbrowser
 from pathlib import Path
-from typing import Optional
+import html
+import re
+import sys
+import webbrowser
 
-from markdown_pdf import MarkdownPdf, Section
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import (
+    BaseDocTemplate,
+    Frame,
+    PageTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    KeepTogether,
+)
 
-try:
-    from . import style_config as style
-except ImportError:
-    import style_config as style
+from . import style_config as style
+from .generate_summary import (
+    get_logo_path,
+    format_date_str,
+    safe_inline,
+)
 
 
 # ============================================================
 # BASIC HELPERS
 # ============================================================
 
-def get_logo_b64(logo_path=None) -> str:
+def open_pdf(path):
     """
-    Convert the configured logo into base64 so it can be embedded
-    directly into the generated HTML/PDF.
+    Open generated PDF using the default Windows PDF viewer.
     """
-
-    if logo_path is None:
-        logo_path = style.LOGO_PATH
-
-    logo_path = Path(logo_path)
-
-    if not logo_path.exists():
-        return ""
 
     try:
-        with open(logo_path, "rb") as file:
-            return base64.b64encode(file.read()).decode("utf-8")
-    except Exception:
-        return ""
-
-
-def format_date_str(yymmdd_str: str) -> str:
-    """
-    Convert YYMMDD into:
-
-        DD-Month-YYYY
-
-    Example:
-
-        250915
-        ->
-        15-September-2025
-    """
-
-    if not yymmdd_str:
-        return ""
-
-    yymmdd_str = str(yymmdd_str).strip()
-
-    if len(yymmdd_str) == 6 and yymmdd_str.isdigit():
-
-        yy = "20" + yymmdd_str[0:2]
-        mm = yymmdd_str[2:4]
-        dd = yymmdd_str[4:6]
-
-        months = {
-            "01": "January",
-            "02": "February",
-            "03": "March",
-            "04": "April",
-            "05": "May",
-            "06": "June",
-            "07": "July",
-            "08": "August",
-            "09": "September",
-            "10": "October",
-            "11": "November",
-            "12": "December",
-        }
-
-        month_name = months.get(mm)
-
-        if month_name:
-            return f"{dd}-{month_name}-{yy}"
-
-    return yymmdd_str
-
-
-def open_pdf(file_path) -> None:
-    """
-    Automatically open the generated PDF.
-
-    Windows:
-        os.startfile()
-
-    Other systems:
-        webbrowser.open()
-    """
-
-    absolute_path = os.path.abspath(file_path)
-
-    if hasattr(os, "startfile"):
-        try:
-            os.startfile(absolute_path)
-            return
-        except Exception:
-            pass
-
-    try:
-        webbrowser.open(f"file://{absolute_path}")
+        webbrowser.open(
+            Path(path).resolve().as_uri()
+        )
     except Exception:
         pass
 
 
-def escape_html(text: str) -> str:
-    """
-    Escape basic HTML characters.
-
-    We intentionally do not aggressively escape the entire input
-    because the source material may already contain simple HTML.
-    """
-
-    if text is None:
-        return ""
-
-    return (
-        str(text)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
-
-
-# ============================================================
-# MCQ PARSING
-# ============================================================
-
-def split_mcq_blocks(text: str) -> list[str]:
-    """
-    Split a raw MCQ document into individual questions.
-
-    Recognises formats such as:
-
-        1. Question...
-        2. Question...
-
-    and:
-
-        Q1. Question...
-        Q2. Question...
-    """
-
-    if not text:
+def normalize_lines(data):
+    if data is None:
         return []
 
-    text = str(text).strip()
+    text = str(data)
 
-    pattern = r"(?=(?:^|\n)\s*(?:\d+\s*[.)]|Q\d+\s*[:.)]))"
+    text = text.replace(
+        "\r\n",
+        "\n",
+    ).replace(
+        "\r",
+        "\n",
+    )
 
-    blocks = re.split(pattern, text, flags=re.IGNORECASE)
+    return [
+        line.rstrip()
+        for line in text.split("\n")
+    ]
 
-    cleaned = []
 
-    for block in blocks:
+# ============================================================
+# HTML / MARKDOWN CLEANING
+# ============================================================
 
-        block = block.strip()
+def strip_html(text):
+    """
+    Remove accidental HTML generated by the AI.
+
+    This prevents tags such as:
+        <div>
+        <span>
+        <br>
+        <strong>
+    from appearing in the final PDF.
+    """
+
+    text = str(text)
+
+    text = re.sub(
+        r"<br\s*/?>",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(
+        r"</p\s*>",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(
+        r"<[^>]+>",
+        "",
+        text,
+    )
+
+    return html.unescape(text)
+
+
+def clean_text(text):
+    """
+    Plain text cleanup for MCQ parser.
+    """
+
+    text = strip_html(text)
+
+    # Remove markdown emphasis markers.
+    text = re.sub(
+        r"\*\*([^*]+)\*\*",
+        r"\1",
+        text,
+    )
+
+    text = re.sub(
+        r"__([^_]+)__",
+        r"\1",
+        text,
+    )
+
+    text = re.sub(
+        r"(?<!\*)\*([^*]+)\*(?!\*)",
+        r"\1",
+        text,
+    )
+
+    text = re.sub(
+        r"(?<!_)_([^_]+)_(?!_)",
+        r"\1",
+        text,
+    )
+
+    # Collapse excessive whitespace.
+    text = re.sub(
+        r"[ \t]+",
+        " ",
+        text,
+    )
+
+    return text.strip()
+
+
+# ============================================================
+# MCQ BLOCK SPLITTING
+# ============================================================
+
+def split_mcq_blocks(text):
+    """
+    Split MCQ content into individual questions.
+
+    A question begins ONLY when a line starts with:
+        1.
+        2.
+        3.
+
+    This is intentionally strict so that:
+        Statement 1:
+        Statement 2:
+        (a)
+        (b)
+    are NOT incorrectly treated as new questions.
+    """
+
+    lines = normalize_lines(text)
+
+    starts = []
+
+    for index, line in enumerate(lines):
+
+        if re.match(
+            r"^\s*\d+\.\s+\S",
+            line,
+        ):
+            starts.append(index)
+
+    if not starts:
+
+        stripped = str(
+            text or ""
+        ).strip()
+
+        return [stripped] if stripped else []
+
+    blocks = []
+
+    for position, start in enumerate(starts):
+
+        if position + 1 < len(starts):
+            end = starts[position + 1]
+        else:
+            end = len(lines)
+
+        block = "\n".join(
+            lines[start:end]
+        ).strip()
 
         if block:
-            cleaned.append(block)
+            blocks.append(block)
 
-    return cleaned
+    return blocks
 
 
-def extract_answer(block: str) -> tuple[str, str]:
+# ============================================================
+# QUESTION NUMBER
+# ============================================================
+
+def extract_question_number(block):
     """
     Extract:
+        1. Question text
 
-        Answer: B
-
-    from a question block.
-
-    Returns:
-
-        answer_text, remaining_question
+    into:
+        ("1", "Question text")
     """
 
-    match = re.search(
-        r"\b(?:Answer|Ans)\s*:\s*(.*?)(?=\bExplanation\s*:|$)",
+    match = re.match(
+        r"^\s*(\d+)\.\s*(.*)$",
         block,
-        flags=re.IGNORECASE | re.DOTALL,
+        flags=re.DOTALL,
     )
 
     if not match:
-        return "", block
+        return "", block.strip()
 
-    answer = match.group(1).strip()
-
-    remaining = (
-        block[: match.start()] +
-        block[match.end():]
-    ).strip()
-
-    return answer, remaining
+    return (
+        match.group(1),
+        match.group(2).strip(),
+    )
 
 
-def extract_explanation(block: str) -> tuple[str, str]:
+# ============================================================
+# ANSWER / EXPLANATION
+# ============================================================
+
+def split_answer_explanation(text):
     """
-    Extract:
+    Separate:
 
+        Answer: (b)
         Explanation: ...
 
-    from a question block.
+    from the question.
     """
 
-    match = re.search(
-        r"\bExplanation\s*:\s*(.*)$",
-        block,
-        flags=re.IGNORECASE | re.DOTALL,
+    answer_match = re.search(
+        r"(?im)^\s*Answer\s*:\s*(.+?)\s*$",
+        text,
     )
 
-    if not match:
-        return "", block
+    if not answer_match:
 
-    explanation = match.group(1).strip()
+        explanation_match = re.search(
+            r"(?im)^\s*Explanation\s*:\s*",
+            text,
+        )
 
-    remaining = block[: match.start()].strip()
+        if explanation_match:
 
-    return explanation, remaining
+            question_part = (
+                text[:explanation_match.start()]
+                .strip()
+            )
 
+            explanation = (
+                text[
+                    explanation_match.end():
+                ].strip()
+            )
 
-def extract_options(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """
-    Extract options from formats such as:
+            return (
+                question_part,
+                "",
+                explanation,
+            )
 
-        (a) Delhi
-        (b) Mumbai
-        (c) Chennai
-        (d) Kolkata
+        return (
+            text.strip(),
+            "",
+            "",
+        )
 
-    or:
-
-        a) Delhi
-        b) Mumbai
-        c) Chennai
-        d) Kolkata
-
-    Returns:
-
-        question_text,
-        options
-    """
-
-    if not text:
-        return "", []
-
-    option_pattern = re.compile(
-        r"(?:^|\s)"
-        r"(\([a-dA-D]\)|[a-dA-D][.)])"
-        r"\s+",
-        flags=re.MULTILINE,
+    question_part = (
+        text[:answer_match.start()]
+        .strip()
     )
 
-    matches = list(option_pattern.finditer(text))
+    answer = (
+        answer_match.group(1)
+        .strip()
+    )
+
+    remaining = (
+        text[answer_match.end():]
+        .strip()
+    )
+
+    explanation_match = re.search(
+        r"(?im)^\s*Explanation\s*:\s*",
+        remaining,
+    )
+
+    if explanation_match:
+
+        explanation = (
+            remaining[
+                explanation_match.end():
+            ].strip()
+        )
+
+    else:
+
+        explanation = remaining
+
+    return (
+        question_part,
+        answer,
+        explanation,
+    )
+
+
+# ============================================================
+# STATEMENTS
+# ============================================================
+
+def extract_statements(text):
+    """
+    Extract:
+
+        Statement 1: ...
+        Statement 2: ...
+        Statement 3: ...
+
+    without confusing them with question numbers.
+    """
+
+    pattern = re.compile(
+        r"(?im)^\s*Statement\s+(\d+)\s*:\s*"
+    )
+
+    matches = list(
+        pattern.finditer(text)
+    )
 
     if not matches:
-        return text.strip(), []
+        return [], text
 
-    first_match = matches[0]
+    statements = []
 
-    question_text = text[: first_match.start()].strip()
+    for index, match in enumerate(matches):
+
+        start = match.end()
+
+        if index + 1 < len(matches):
+
+            end = matches[
+                index + 1
+            ].start()
+
+        else:
+
+            # Stop at the first option or answer.
+            remainder = text[start:]
+
+            stop_match = re.search(
+                r"(?im)^\s*"
+                r"(?:"
+                r"\([abcd]\)"
+                r"|Answer\s*:"
+                r"|Explanation\s*:"
+                r")",
+                remainder,
+            )
+
+            if stop_match:
+                end = (
+                    start
+                    + stop_match.start()
+                )
+            else:
+                end = len(text)
+
+        statement_text = text[
+            start:end
+        ].strip()
+
+        statement_text = clean_text(
+            statement_text
+        )
+
+        statements.append(
+            (
+                match.group(1),
+                statement_text,
+            )
+        )
+
+    # Remove statement block from question text.
+    first_start = matches[0].start()
+
+    before = text[
+        :first_start
+    ].strip()
+
+    after = text[
+        matches[-1].end():
+    ]
+
+    # Remove the last statement body from the
+    # remaining question text.
+    last_stop = re.search(
+        r"(?im)^\s*"
+        r"(?:"
+        r"\([abcd]\)"
+        r"|Answer\s*:"
+        r"|Explanation\s*:"
+        r")",
+        after,
+    )
+
+    if last_stop:
+
+        remaining = after[
+            last_stop.start():
+        ].strip()
+
+    else:
+
+        remaining = ""
+
+    if before and remaining:
+        question_text = (
+            before
+            + "\n"
+            + remaining
+        )
+    elif before:
+        question_text = before
+    else:
+        question_text = remaining
+
+    return (
+        statements,
+        question_text.strip(),
+    )
+
+
+# ============================================================
+# OPTIONS
+# ============================================================
+
+def extract_options(text):
+    """
+    Extract options:
+
+        (a) ...
+        (b) ...
+        (c) ...
+        (d) ...
+
+    Options may be on separate lines or accidentally placed
+    on the same line.
+    """
+
+    pattern = re.compile(
+        r"(?im)(?:^|\s)"
+        r"(\([abcd]\))"
+        r"\s*"
+    )
+
+    matches = list(
+        pattern.finditer(text)
+    )
+
+    if not matches:
+        return [], text.strip()
 
     options = []
 
     for index, match in enumerate(matches):
 
-        label = match.group(1).strip()
+        label = (
+            match.group(1)
+            .lower()
+        )
 
-        content_start = match.end()
+        start = match.end()
 
         if index + 1 < len(matches):
-            content_end = matches[index + 1].start()
+
+            end = matches[
+                index + 1
+            ].start()
+
         else:
-            content_end = len(text)
 
-        content = text[content_start:content_end].strip()
+            end = len(text)
 
-        if content:
-            options.append((label, content))
+        option_text = text[
+            start:end
+        ].strip()
 
-    return question_text, options
+        option_text = clean_text(
+            option_text
+        )
 
+        options.append(
+            (
+                label,
+                option_text,
+            )
+        )
 
-def parse_statements(question_text: str) -> Optional[dict]:
-    """
-    Detect questions containing:
+    question_text = text[
+        :matches[0].start()
+    ].strip()
 
-        Statement 1:
-        Statement 2:
-
-    and optionally:
-
-        Which of the statements given above is/are correct?
-
-    """
-
-    if not re.search(
-        r"\bStatement\s*1\s*:",
+    return (
+        options,
         question_text,
-        flags=re.IGNORECASE,
-    ):
-        return None
-
-    first_statement = re.search(
-        r"\bStatement\s*1\s*:",
-        question_text,
-        flags=re.IGNORECASE,
     )
 
-    if not first_statement:
-        return None
 
-    lead = question_text[: first_statement.start()].strip()
+# ============================================================
+# PARSE ONE MCQ
+# ============================================================
 
-    statement_area = question_text[first_statement.start():].strip()
+def parse_mcq(block):
+    """
+    Convert a raw MCQ block into a structured dictionary.
+    """
 
-    which_match = re.search(
-        r"\bWhich of the\b.*$",
-        statement_area,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-
-    if which_match:
-
-        statements_text = statement_area[: which_match.start()].strip()
-
-        which_text = which_match.group(0).strip()
-
-    else:
-
-        statements_text = statement_area
-        which_text = ""
-
-    statement_matches = list(
-        re.finditer(
-            r"Statement\s*(\d+)\s*:\s*",
-            statements_text,
-            flags=re.IGNORECASE,
+    number, body = (
+        extract_question_number(
+            block
         )
     )
 
-    statements = []
+    (
+        main_content,
+        answer,
+        explanation,
+    ) = split_answer_explanation(
+        body
+    )
 
-    for index, match in enumerate(statement_matches):
+    (
+        statements,
+        main_without_statements,
+    ) = extract_statements(
+        main_content
+    )
 
-        number = match.group(1)
+    (
+        options,
+        question_text,
+    ) = extract_options(
+        main_without_statements
+    )
 
-        content_start = match.end()
+    question_text = clean_text(
+        question_text
+    )
 
-        if index + 1 < len(statement_matches):
-            content_end = statement_matches[index + 1].start()
-        else:
-            content_end = len(statements_text)
+    answer = clean_text(
+        answer
+    )
 
-        content = statements_text[
-            content_start:content_end
-        ].strip()
-
-        if content:
-            statements.append((number, content))
-
-    if not statements:
-        return None
+    explanation = clean_text(
+        explanation
+    )
 
     return {
-        "lead": lead,
+        "number": number,
+        "question": question_text,
         "statements": statements,
-        "which": which_text,
+        "options": options,
+        "answer": answer,
+        "explanation": explanation,
     }
 
 
 # ============================================================
-# HTML BUILDING
+# MCQ CONTENT STYLES
 # ============================================================
 
-def build_statement_html(parsed: dict) -> str:
+def mcq_question_paragraph(number, question):
     """
-    Convert statement-based question data into HTML.
-    """
-
-    html_parts = []
-
-    lead = parsed.get("lead", "").strip()
-
-    if lead:
-        html_parts.append(
-            f'<div class="mcq-lead">{lead}</div>'
-        )
-
-    statements = parsed.get("statements", [])
-
-    if statements:
-
-        html_parts.append(
-            '<div class="mcq-statements">'
-        )
-
-        for number, content in statements:
-
-            html_parts.append(
-                '<div class="mcq-statement">'
-                f'<span class="statement-number">{number}.</span> '
-                f'{content}'
-                '</div>'
-            )
-
-        html_parts.append("</div>")
-
-    which = parsed.get("which", "").strip()
-
-    if which:
-        html_parts.append(
-            f'<div class="mcq-which">{which}</div>'
-        )
-
-    return "\n".join(html_parts)
-
-
-def build_options_html(
-    options: list[tuple[str, str]]
-) -> str:
-    """
-    Build a two-column option layout.
+    Render:
+        1. Which of the following...
     """
 
-    if not options:
-        return ""
+    if not question:
+        return None
 
-    rows = []
+    if number:
 
-    for index in range(0, len(options), 2):
-
-        row = options[index:index + 2]
-
-        cells = []
-
-        for label, content in row:
-
-            cells.append(
-                '<div class="option-cell">'
-                f'<span class="option-label">{label}</span> '
-                f'{content}'
-                '</div>'
-            )
-
-        while len(cells) < 2:
-            cells.append(
-                '<div class="option-cell"></div>'
-            )
-
-        rows.append(
-            '<div class="option-row">'
-            + "".join(cells)
-            + "</div>"
-        )
-
-    return (
-        '<div class="options-grid">'
-        + "\n".join(rows)
-        + "</div>"
-    )
-
-
-def build_question_html(
-    question_number: int,
-    block: str,
-) -> str:
-    """
-    Convert one raw MCQ block into HTML.
-    """
-
-    answer, block = extract_answer(block)
-
-    explanation, block = extract_explanation(block)
-
-    question_text, options = extract_options(block)
-
-    statement_data = parse_statements(question_text)
-
-    if statement_data:
-
-        question_html = build_statement_html(
-            statement_data
+        text = (
+            f"<b>{number}.</b> "
+            f"{safe_inline(question)}"
         )
 
     else:
 
-        question_html = (
-            f'<div class="mcq-lead">'
-            f'{question_text}'
-            f'</div>'
+        text = safe_inline(
+            question
         )
 
-    options_html = build_options_html(options)
-
-    answer_html = ""
-
-    if answer:
-
-        answer_html = (
-            '<div class="mcq-answer">'
-            f'<strong>{style.ANSWER_LABEL}:</strong> '
-            f'{answer}'
-            '</div>'
-        )
-
-    explanation_html = ""
-
-    if explanation:
-
-        explanation_html = (
-            '<div class="mcq-explanation">'
-            f'<strong>{style.EXPLANATION_LABEL}:</strong> '
-            f'{explanation}'
-            '</div>'
-        )
-
-    return f"""
-<div class="mcq-card">
-
-    <div class="question-number">
-        {style.QUESTION_NUMBER_FORMAT.format(
-            number=question_number
-        )}
-    </div>
-
-    <div class="question-content">
-        {question_html}
-    </div>
-
-    {options_html}
-
-    {answer_html}
-
-    {explanation_html}
-
-</div>
-"""
+    return Paragraph(
+        text,
+        style.MCQ_QUESTION_STYLE,
+    )
 
 
-def format_mcq_content(text: str) -> str:
+def mcq_statement_paragraph(
+    number,
+    statement,
+):
     """
-    Convert raw MCQ text into the HTML used by the PDF.
-
-    If the input already contains our MCQ HTML structure,
-    it is returned unchanged.
+    Render:
+        Statement 1: ...
     """
 
-    if not text:
-        return ""
-
-    text = str(text).strip()
-
-    if (
-        '<div class="mcq-card"' in text
-        or '<div class="mcq-item"' in text
-    ):
-        return text
-
-    blocks = split_mcq_blocks(text)
-
-    if not blocks:
-        return text
-
-    formatted = []
-
-    for index, block in enumerate(blocks, start=1):
-
-        formatted.append(
-            build_question_html(index, block)
-        )
-
-    return "\n".join(formatted)
+    return Paragraph(
+        (
+            f"<b>Statement {number}:</b> "
+            f"{safe_inline(statement)}"
+        ),
+        style.MCQ_STATEMENT_STYLE,
+    )
 
 
-# ============================================================
-# CSS GENERATION
-# ============================================================
-
-def build_css() -> str:
+def build_options_table(options):
     """
-    Generate all MCQ CSS from style_config.py.
-
-    This is deliberately kept in one place so the PDF
-    appearance can be controlled from style_config.py.
-    """
-
-    page_margin_top = style.PAGE_MARGIN_TOP
-    page_margin_right = style.PAGE_MARGIN_RIGHT
-    page_margin_bottom = style.PAGE_MARGIN_BOTTOM
-    page_margin_left = style.PAGE_MARGIN_LEFT
-
-    return f"""
-@page {{
-    size: {style.PAGE_SIZE};
-    margin:
-        {page_margin_top}pt
-        {page_margin_right}pt
-        {page_margin_bottom}pt
-        {page_margin_left}pt;
-}}
-
-* {{
-    box-sizing: border-box;
-}}
-
-body {{
-    font-family: "{style.BODY_FONT}";
-    font-size: {style.BODY_FONT_SIZE}pt;
-    line-height: {style.BODY_LEADING}pt;
-    color: {style.BODY_COLOR};
-    margin: 0;
-    padding: 0;
-}}
-
-.header {{
-    width: 100%;
-    border-bottom:
-        1px solid {style.COLOR_BLUE};
-    padding-bottom: 6px;
-    margin-bottom: 10px;
-}}
-
-.header-table {{
-    width: 100%;
-    border-collapse: collapse;
-}}
-
-.header-table td {{
-    border: none;
-    padding: 0;
-    vertical-align: middle;
-}}
-
-.logo-cell {{
-    width: {style.LOGO_WIDTH}px;
-}}
-
-.logo {{
-    width: {style.LOGO_WIDTH}px;
-    height: auto;
-}}
-
-.title-cell {{
-    text-align: left;
-    padding-left: 8px !important;
-}}
-
-.document-title {{
-    font-family: "{style.TITLE_FONT}";
-    font-size: {style.TITLE_FONT_SIZE}pt;
-    color: {style.TITLE_COLOR};
-    line-height: 1.15;
-    margin: 0;
-}}
-
-.date-cell {{
-    text-align: right;
-    white-space: nowrap;
-}}
-
-.document-date {{
-    font-family: "{style.SMALL_FONT}";
-    font-size: {style.SMALL_FONT_SIZE}pt;
-    color: {style.SMALL_COLOR};
-}}
-
-.content-area {{
-    width: 100%;
-}}
-
-.mcq-card {{
-    width: 100%;
-    margin-bottom: {style.QUESTION_SPACE_AFTER}pt;
-    padding-bottom: 5px;
-    page-break-inside: avoid;
-}}
-
-.mcq-card + .mcq-card {{
-    border-top:
-        {style.DIVIDER_WIDTH}px
-        dashed
-        {style.DIVIDER_COLOR};
-    padding-top: 6px;
-}}
-
-.question-number {{
-    display: inline;
-    font-family: "{style.QUESTION_NUMBER_FONT}";
-    font-size: {style.QUESTION_NUMBER_SIZE}pt;
-    color: {style.QUESTION_NUMBER_COLOR};
-    margin-right: 4px;
-}}
-
-.question-content {{
-    display: inline;
-}}
-
-.mcq-lead {{
-    display: inline;
-    font-family: "{style.QUESTION_FONT}";
-    font-size: {style.QUESTION_FONT_SIZE}pt;
-    color: {style.QUESTION_COLOR};
-    line-height: {style.QUESTION_LEADING}pt;
-}}
-
-.mcq-statements {{
-    margin-top: 3px;
-    margin-bottom: 4px;
-}}
-
-.mcq-statement {{
-    font-family: "{style.BODY_FONT}";
-    font-size: {style.BODY_FONT_SIZE}pt;
-    color: {style.BODY_COLOR};
-    line-height: {style.BODY_LEADING}pt;
-    margin-bottom: 2px;
-}}
-
-.statement-number {{
-    font-family: "{style.QUESTION_NUMBER_FONT}";
-    color: {style.QUESTION_NUMBER_COLOR};
-}}
-
-.mcq-which {{
-    font-family: "{style.QUESTION_FONT}";
-    font-size: {style.QUESTION_FONT_SIZE}pt;
-    color: {style.QUESTION_COLOR};
-    line-height: {style.QUESTION_LEADING}pt;
-    margin-top: 3px;
-    margin-bottom: 4px;
-}}
-
-.options-grid {{
-    display: table;
-    width: 100%;
-    margin-top: 4px;
-    margin-bottom: 4px;
-}}
-
-.option-row {{
-    display: table-row;
-}}
-
-.option-cell {{
-    display: table-cell;
-    width: 50%;
-    vertical-align: top;
-    padding:
-        {style.OPTION_SPACE_BEFORE}pt
-        6pt
-        {style.OPTION_SPACE_AFTER}pt
-        0;
-    font-family: "{style.OPTION_FONT}";
-    font-size: {style.OPTION_FONT_SIZE}pt;
-    color: {style.OPTION_COLOR};
-    line-height: {style.OPTION_LEADING}pt;
-}}
-
-.option-label {{
-    font-family: "{style.QUESTION_NUMBER_FONT}";
-    color: {style.QUESTION_NUMBER_COLOR};
-}}
-
-.mcq-answer {{
-    border-left:
-        2px solid
-        {style.COLOR_GREEN};
-    padding: 3px 6px;
-    margin-top: 4px;
-    margin-bottom: 3px;
-    font-family: "{style.ANSWER_FONT}";
-    font-size: {style.ANSWER_FONT_SIZE}pt;
-    color: {style.ANSWER_COLOR};
-    line-height: {style.ANSWER_LEADING}pt;
-}}
-
-.mcq-explanation {{
-    border-left:
-        2px solid
-        {style.DIVIDER_COLOR};
-    padding: 3px 6px;
-    margin-top: 2px;
-    margin-bottom: 4px;
-    font-family: "{style.EXPLANATION_FONT}";
-    font-size: {style.EXPLANATION_FONT_SIZE}pt;
-    color: {style.EXPLANATION_COLOR};
-    line-height: {style.EXPLANATION_LEADING}pt;
-}}
-
-.mcq-explanation strong {{
-    font-family: "{style.ANSWER_FONT}";
-}}
-
-.footer {{
-    width: 100%;
-    text-align: {style.FOOTER_ALIGNMENT.lower()};
-    font-family: "{style.FOOTER_FONT}";
-    font-size: {style.FOOTER_FONT_SIZE}pt;
-    color: {style.FOOTER_COLOR};
-    margin-top: 8px;
-}}
-
-.notes-column {{
-    display: none;
-}}
-"""
-
-
-# ============================================================
-# HEADER HTML
-# ============================================================
-
-def build_header(
-    formatted_date: str,
-) -> str:
-    """
-    Build the document header.
-    """
-
-    logo_b64 = ""
-
-    if style.SHOW_LOGO:
-        logo_b64 = get_logo_b64()
-
-    logo_html = ""
-
-    if logo_b64:
-
-        logo_html = (
-            '<td class="logo-cell">'
-            f'<img '
-            f'src="data:image/png;base64,{logo_b64}" '
-            f'class="logo" '
-            f'alt="Logo"/>'
-            '</td>'
-        )
-
-    title = style.TITLE_TEXT
-
-    date_html = ""
-
-    if formatted_date:
-
-        date_html = (
-            f'<div class="document-date">'
-            f'Date: {formatted_date}'
-            f'</div>'
-        )
-
-    return f"""
-<div class="header">
-
-<table class="header-table">
-<tr>
-
-{logo_html}
-
-<td class="title-cell">
-    <div class="document-title">
-        {title}
-    </div>
-</td>
-
-<td class="date-cell">
-    {date_html}
-</td>
-
-</tr>
-</table>
-
-</div>
-"""
-
-
-# ============================================================
-# FOOTER HTML
-# ============================================================
-
-def build_footer() -> str:
-    """
-    Build the footer if enabled.
-    """
-
-    if not style.SHOW_FOOTER:
-        return ""
-
-    footer_text = style.FOOTER_TEXT
-
-    return f"""
-<div class="footer">
-    {footer_text}
-</div>
-"""
-
-
-# ============================================================
-# OUTPUT PATH
-# ============================================================
-
-def default_output_path(
-    yymmdd_str: str,
-) -> Path:
-    """
-    Generate the default output path.
+    Render MCQ options in a clean 2-column grid.
 
     Example:
 
-        output/
-            2025/
-                September/
-                    15/
-                        250915_mcqs.pdf
+    (a) Option A                 (b) Option B
+    (c) Option C                 (d) Option D
     """
 
-    date_text = format_date_str(yymmdd_str)
+    if not options:
+        return None
 
-    if (
-        len(yymmdd_str) == 6
-        and yymmdd_str.isdigit()
+    content_width = (
+        A4[0]
+        - style.MARGIN_LEFT
+        - style.MARGIN_RIGHT
+    )
+
+    main_width = (
+        content_width
+        * style.CONTENT_COLUMN_RATIO
+        - style.CONTENT_RIGHT_PADDING
+    )
+
+    column_width = (
+        main_width / 2
+    )
+
+    cells = []
+
+    for label, option_text in options:
+
+        cell = Paragraph(
+            (
+                f"<b>{safe_inline(label)}</b> "
+                f"{safe_inline(option_text)}"
+            ),
+            style.MCQ_OPTION_STYLE,
+        )
+
+        cells.append(cell)
+
+    rows = []
+
+    for index in range(
+        0,
+        len(cells),
+        2,
     ):
 
-        year = "20" + yymmdd_str[:2]
+        left = cells[index]
 
-        parts = date_text.split("-")
+        if index + 1 < len(cells):
+            right = cells[index + 1]
+        else:
+            right = Paragraph(
+                "",
+                style.MCQ_OPTION_STYLE,
+            )
 
-        if len(parts) == 3:
+        rows.append(
+            [
+                left,
+                right,
+            ]
+        )
 
-            day = parts[0]
-            month = parts[1]
+    table = Table(
+        rows,
+        colWidths=[
+            column_width,
+            column_width,
+        ],
+        hAlign="LEFT",
+    )
+
+    table.setStyle(
+        TableStyle(
+            [
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "TOP",
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    style.MCQ_OPTION_GAP,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    1,
+                ),
+            ]
+        )
+    )
+
+    return table
+
+
+# ============================================================
+# ANSWER BOX
+# ============================================================
+
+def build_answer_box(answer):
+    if not answer:
+        return None
+
+    content_width = (
+        A4[0]
+        - style.MARGIN_LEFT
+        - style.MARGIN_RIGHT
+    )
+
+    main_width = (
+        content_width
+        * style.CONTENT_COLUMN_RATIO
+        - style.CONTENT_RIGHT_PADDING
+    )
+
+    paragraph = Paragraph(
+        (
+            "<b>Answer:</b> "
+            f"{safe_inline(answer)}"
+        ),
+        style.MCQ_ANSWER_STYLE,
+    )
+
+    table = Table(
+        [[paragraph]],
+        colWidths=[
+            main_width
+        ],
+    )
+
+    table.setStyle(
+        TableStyle(
+            [
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, -1),
+                    style.MCQ_ANSWER_BACKGROUND,
+                ),
+                (
+                    "BOX",
+                    (0, 0),
+                    (-1, -1),
+                    0.5,
+                    style.MCQ_ANSWER_BORDER,
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    6,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    6,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    3,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    3,
+                ),
+            ]
+        )
+    )
+
+    return table
+
+
+# ============================================================
+# EXPLANATION BOX
+# ============================================================
+
+def build_explanation_box(
+    explanation
+):
+    if not explanation:
+        return None
+
+    content_width = (
+        A4[0]
+        - style.MARGIN_LEFT
+        - style.MARGIN_RIGHT
+    )
+
+    main_width = (
+        content_width
+        * style.CONTENT_COLUMN_RATIO
+        - style.CONTENT_RIGHT_PADDING
+    )
+
+    paragraph = Paragraph(
+        (
+            "<b>Explanation:</b> "
+            f"{safe_inline(explanation)}"
+        ),
+        style.MCQ_EXPLANATION_STYLE,
+    )
+
+    table = Table(
+        [[paragraph]],
+        colWidths=[
+            main_width
+        ],
+    )
+
+    table.setStyle(
+        TableStyle(
+            [
+                (
+                    "BACKGROUND",
+                    (0, 0),
+                    (-1, -1),
+                    style.MCQ_EXPLANATION_BACKGROUND,
+                ),
+                (
+                    "BOX",
+                    (0, 0),
+                    (-1, -1),
+                    0.5,
+                    style.MCQ_EXPLANATION_BORDER,
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    6,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    6,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    3,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    3,
+                ),
+            ]
+        )
+    )
+
+    return table
+
+
+# ============================================================
+# ONE QUESTION → FLOWABLES
+# ============================================================
+
+def build_question_story(question):
+    """
+    Build one complete MCQ.
+
+    The question, statements, options, answer and explanation
+    are kept together where ReportLab can fit them.
+    """
+
+    elements = []
+
+    number = question.get(
+        "number",
+        "",
+    )
+
+    question_text = question.get(
+        "question",
+        "",
+    )
+
+    statements = question.get(
+        "statements",
+        [],
+    )
+
+    options = question.get(
+        "options",
+        [],
+    )
+
+    answer = question.get(
+        "answer",
+        "",
+    )
+
+    explanation = question.get(
+        "explanation",
+        "",
+    )
+
+    # --------------------------------------------------------
+    # Question
+    # --------------------------------------------------------
+
+    question_paragraph = (
+        mcq_question_paragraph(
+            number,
+            question_text,
+        )
+    )
+
+    if question_paragraph:
+
+        elements.append(
+            question_paragraph
+        )
+
+    # --------------------------------------------------------
+    # Statements
+    # --------------------------------------------------------
+
+    for statement_number, statement in statements:
+
+        elements.append(
+            mcq_statement_paragraph(
+                statement_number,
+                statement,
+            )
+        )
+
+    # --------------------------------------------------------
+    # Options
+    # --------------------------------------------------------
+
+    options_table = (
+        build_options_table(
+            options
+        )
+    )
+
+    if options_table:
+
+        elements.append(
+            Spacer(
+                1,
+                1,
+            )
+        )
+
+        elements.append(
+            options_table
+        )
+
+    # --------------------------------------------------------
+    # Answer
+    # --------------------------------------------------------
+
+    answer_box = (
+        build_answer_box(
+            answer
+        )
+    )
+
+    if answer_box:
+
+        elements.append(
+            Spacer(
+                1,
+                2,
+            )
+        )
+
+        elements.append(
+            answer_box
+        )
+
+    # --------------------------------------------------------
+    # Explanation
+    # --------------------------------------------------------
+
+    explanation_box = (
+        build_explanation_box(
+            explanation
+        )
+    )
+
+    if explanation_box:
+
+        elements.append(
+            Spacer(
+                1,
+                2,
+            )
+        )
+
+        elements.append(
+            explanation_box
+        )
+
+    # --------------------------------------------------------
+    # Small gap before next question
+    # --------------------------------------------------------
+
+    elements.append(
+        Spacer(
+            1,
+            style.MCQ_BLOCK_SPACE_AFTER,
+        )
+    )
+
+    return elements
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
+def draw_header(canvas, doc):
+
+    page_width, page_height = A4
+
+    left = style.MARGIN_LEFT
+
+    right = (
+        page_width
+        - style.MARGIN_RIGHT
+    )
+
+    top = (
+        page_height
+        - style.MARGIN_TOP
+    )
+
+    # --------------------------------------------------------
+    # Logo
+    # --------------------------------------------------------
+
+    logo_path = get_logo_path()
+
+    if logo_path:
+
+        try:
+
+            from reportlab.lib.utils import (
+                ImageReader
+            )
+
+            image = ImageReader(
+                str(logo_path)
+            )
+
+            image_width, image_height = (
+                image.getSize()
+            )
+
+            target_width = (
+                style.HEADER_LOGO_WIDTH
+            )
+
+            target_height = (
+                target_width
+                * image_height
+                / image_width
+            )
+
+            canvas.drawImage(
+                image,
+                left,
+                top - target_height,
+                width=target_width,
+                height=target_height,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+
+        except Exception:
+            pass
+
+    # --------------------------------------------------------
+    # Header title
+    # --------------------------------------------------------
+
+    title_x = (
+        left
+        + style.HEADER_LOGO_CELL_WIDTH
+    )
+
+    title = getattr(
+        doc,
+        "_pib_header_title",
+        style.BRAND_NAME,
+    )
+
+    canvas.setFont(
+        style.BODY_BOLD_FONT,
+        style.HEADER_TITLE_SIZE,
+    )
+
+    canvas.setFillColor(
+        style.HEADER_TITLE_COLOR
+    )
+
+    max_width = (
+        right
+        - title_x
+    )
+
+    words = title.split()
+
+    lines = []
+    current = ""
+
+    for word in words:
+
+        candidate = (
+            word
+            if not current
+            else f"{current} {word}"
+        )
+
+        if (
+            canvas.stringWidth(
+                candidate,
+                style.BODY_BOLD_FONT,
+                style.HEADER_TITLE_SIZE,
+            )
+            <= max_width
+        ):
+
+            current = candidate
 
         else:
 
-            day = yymmdd_str[4:6]
-            month = "Unknown"
+            if current:
+                lines.append(
+                    current
+                )
 
-    else:
+            current = word
 
-        year = "Unknown"
-        month = "Unknown"
-        day = "Unknown"
+    if current:
+        lines.append(
+            current
+        )
 
-    return (
-        style.OUTPUT_DIR
-        / year
-        / month
-        / day
-        / f"{yymmdd_str}_mcqs.pdf"
+    title_y = top - 12
+
+    for line in lines[:2]:
+
+        canvas.drawString(
+            title_x,
+            title_y,
+            line,
+        )
+
+        title_y -= (
+            style.HEADER_TITLE_LEADING
+        )
+
+    # --------------------------------------------------------
+    # Blue divider
+    # --------------------------------------------------------
+
+    divider_y = (
+        top
+        - max(
+            30,
+            len(lines[:2])
+            * style.HEADER_TITLE_LEADING
+            + 8,
+        )
+    )
+
+    canvas.setStrokeColor(
+        style.HEADER_DIVIDER_COLOR
+    )
+
+    canvas.setLineWidth(
+        style.HEADER_DIVIDER_WIDTH
+    )
+
+    canvas.line(
+        left,
+        divider_y,
+        right,
+        divider_y,
+    )
+
+    # --------------------------------------------------------
+    # Date
+    # --------------------------------------------------------
+
+    date_text = getattr(
+        doc,
+        "_pib_date_text",
+        "",
+    )
+
+    if date_text:
+
+        canvas.setFont(
+            style.BODY_FONT,
+            7.5,
+        )
+
+        canvas.setFillColor(
+            style.NOTES_TEXT_COLOR
+        )
+
+        canvas.drawRightString(
+            right,
+            divider_y - 10,
+            date_text,
+        )
+
+    # --------------------------------------------------------
+    # Notes separator
+    # --------------------------------------------------------
+
+    usable_width = (
+        page_width
+        - style.MARGIN_LEFT
+        - style.MARGIN_RIGHT
+    )
+
+    separator_x = (
+        style.MARGIN_LEFT
+        + usable_width
+        * style.CONTENT_COLUMN_RATIO
+    )
+
+    canvas.setStrokeColor(
+        style.NOTES_SEPARATOR_COLOR
+    )
+
+    canvas.setLineWidth(
+        style.NOTES_SEPARATOR_WIDTH
+    )
+
+    canvas.setDash(
+        2,
+        2,
+    )
+
+    canvas.line(
+        separator_x,
+        divider_y - 3,
+        separator_x,
+        style.MARGIN_BOTTOM + 3,
+    )
+
+    canvas.setDash()
+
+    # --------------------------------------------------------
+    # Notes label
+    # --------------------------------------------------------
+
+    notes_center = (
+        separator_x
+        + usable_width
+        * style.NOTES_COLUMN_RATIO
+        / 2
+    )
+
+    canvas.setFont(
+        style.BODY_FONT,
+        style.NOTES_TEXT_SIZE,
+    )
+
+    canvas.setFillColor(
+        style.NOTES_TEXT_COLOR
+    )
+
+    canvas.drawCentredString(
+        notes_center,
+        divider_y - 16,
+        "NOTES",
     )
 
 
 # ============================================================
-# PDF GENERATOR
+# FOOTER
+# ============================================================
+
+def draw_footer(canvas, doc):
+
+    page_width, _ = A4
+
+    left = style.MARGIN_LEFT
+
+    right = (
+        page_width
+        - style.MARGIN_RIGHT
+    )
+
+    footer_y = 4.5 * style.mm
+
+    canvas.setFont(
+        style.BODY_FONT,
+        style.FOOTER_FONT_SIZE,
+    )
+
+    canvas.setFillColor(
+        style.FOOTER_COLOR
+    )
+
+    canvas.drawString(
+        left,
+        footer_y,
+        style.BRAND_NAME,
+    )
+
+    canvas.drawRightString(
+        right,
+        footer_y,
+        f"Page {doc.page}",
+    )
+
+
+def draw_page(canvas, doc):
+
+    canvas.saveState()
+
+    draw_header(
+        canvas,
+        doc,
+    )
+
+    draw_footer(
+        canvas,
+        doc,
+    )
+
+    canvas.restoreState()
+
+
+# ============================================================
+# DOCUMENT
+# ============================================================
+
+class PIBMCQDocTemplate(
+    BaseDocTemplate
+):
+
+    def __init__(
+        self,
+        filename,
+        header_title,
+        date_text="",
+    ):
+
+        super().__init__(
+            filename,
+            pagesize=A4,
+            leftMargin=style.MARGIN_LEFT,
+            rightMargin=style.MARGIN_RIGHT,
+
+            # EXACT SAME HEADER SPACE AS SUMMARY.
+            topMargin=(
+                style.MARGIN_TOP
+                + 34
+            ),
+
+            bottomMargin=(
+                style.MARGIN_BOTTOM
+                + 4
+            ),
+
+            title=header_title,
+            author=style.BRAND_NAME,
+        )
+
+        usable_width = (
+            A4[0]
+            - style.MARGIN_LEFT
+            - style.MARGIN_RIGHT
+        )
+
+        main_width = (
+            usable_width
+            * style.CONTENT_COLUMN_RATIO
+            - style.CONTENT_RIGHT_PADDING
+        )
+
+        frame_height = (
+            A4[1]
+            - self.topMargin
+            - self.bottomMargin
+        )
+
+        main_frame = Frame(
+            style.MARGIN_LEFT,
+            self.bottomMargin,
+            main_width,
+            frame_height,
+            leftPadding=0,
+            rightPadding=0,
+            topPadding=0,
+            bottomPadding=0,
+            id="PIBMCQMain",
+        )
+
+        template = PageTemplate(
+            id="PIBMCQ",
+            frames=[main_frame],
+            onPage=draw_page,
+        )
+
+        self.addPageTemplates(
+            [template]
+        )
+
+        self._pib_header_title = (
+            header_title
+        )
+
+        self._pib_date_text = (
+            date_text
+        )
+
+
+# ============================================================
+# PUBLIC GENERATOR
 # ============================================================
 
 def generate_mcq_pdf(
@@ -993,168 +1513,156 @@ def generate_mcq_pdf(
     yymmdd_str="",
 ):
     """
-    Generate an MCQ PDF.
+    Generate compact MCQ PDF.
 
-    Parameters
-    ----------
-    mcq_data:
-        Raw MCQ text.
-
-    output_path:
-        Optional output PDF path.
-
-    yymmdd_str:
-        Optional date in YYMMDD format.
-
-    Returns
-    -------
-    Path
-        The generated PDF path.
+    Layout is identical to Summary / Quick Revision.
     """
 
-    if mcq_data is None:
-        mcq_data = ""
-
-    mcq_data = str(mcq_data)
-
-    formatted_date = format_date_str(
-        yymmdd_str
-    )
-
     if output_path is None:
-
-        output_path = default_output_path(
-            yymmdd_str
+        output_path = Path(
+            "mcqs.pdf"
         )
 
-    output_path = Path(output_path)
+    output_path = Path(
+        output_path
+    )
 
     output_path.parent.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    structured_content = format_mcq_content(
-        mcq_data
+    date_text = format_date_str(
+        yymmdd_str
     )
 
-    header_html = build_header(
-        formatted_date
+    document = PIBMCQDocTemplate(
+        str(output_path),
+        header_title=style.BRAND_NAME,
+        date_text=date_text,
     )
 
-    footer_html = build_footer()
+    raw_text = str(
+        mcq_data or ""
+    ).strip()
 
-    wrapped_content = f"""
-{header_html}
-
-<div class="content-area">
-
-{structured_content}
-
-</div>
-
-{footer_html}
-"""
-
-    css = build_css()
-
-    pdf = MarkdownPdf(
-        toc_level=0
+    blocks = split_mcq_blocks(
+        raw_text
     )
 
-    pdf.add_section(
-        Section(
-            wrapped_content,
-            paper_size=style.PAGE_SIZE,
-        ),
-        user_css=css,
+    story = []
+
+    # --------------------------------------------------------
+    # Parse and render each question.
+    # --------------------------------------------------------
+
+    for block in blocks:
+
+        parsed = parse_mcq(
+            block
+        )
+
+        question_story = (
+            build_question_story(
+                parsed
+            )
+        )
+
+        if question_story:
+
+            # Keep the individual question together whenever
+            # the question is small enough for one page.
+            story.append(
+                KeepTogether(
+                    question_story
+                )
+            )
+
+    # --------------------------------------------------------
+    # Empty MCQ input
+    # --------------------------------------------------------
+
+    if not story:
+
+        story.append(
+            Paragraph(
+                "No MCQs available.",
+                style.BODY_STYLE,
+            )
+        )
+
+    # --------------------------------------------------------
+    # Build PDF
+    # --------------------------------------------------------
+
+    document.build(
+        story
     )
 
-    pdf.save(
-        str(output_path)
+    return str(
+        output_path
     )
-
-    print(
-        f"Generated MCQ PDF: "
-        f"{output_path.resolve()}"
-    )
-
-    open_pdf(output_path)
-
-    return output_path
 
 
 # ============================================================
 # COMPATIBILITY ALIASES
 # ============================================================
 
-generate_mcqs = generate_mcq_pdf
+generate_mcqs = (
+    generate_mcq_pdf
+)
 
-generate_mcqs_pdf = generate_mcq_pdf
+generate_mcqs_pdf = (
+    generate_mcq_pdf
+)
 
 
 # ============================================================
-# OPTIONAL COMMAND-LINE USAGE
+# COMMAND LINE
 # ============================================================
-
-def main():
-    """
-    Simple command-line interface.
-
-    Examples:
-
-        python tools/generate_mcqs.py input.txt
-
-        python tools/generate_mcqs.py input.txt 250915
-
-        python tools/generate_mcqs.py input.txt 250915 output.pdf
-    """
-
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Generate a PDF from raw MCQs."
-    )
-
-    parser.add_argument(
-        "input_file",
-        help="Text file containing MCQs.",
-    )
-
-    parser.add_argument(
-        "date",
-        nargs="?",
-        default="",
-        help="Date in YYMMDD format.",
-    )
-
-    parser.add_argument(
-        "output",
-        nargs="?",
-        default=None,
-        help="Optional output PDF path.",
-    )
-
-    args = parser.parse_args()
-
-    input_path = Path(args.input_file)
-
-    if not input_path.exists():
-
-        raise FileNotFoundError(
-            f"Input file not found: {input_path}"
-        )
-
-    text = input_path.read_text(
-        encoding="utf-8"
-    )
-
-    generate_mcq_pdf(
-        text,
-        output_path=args.output,
-        yymmdd_str=args.date,
-    )
-
 
 if __name__ == "__main__":
-    main()
+
+    if len(sys.argv) < 3:
+
+        print(
+            "Usage:"
+        )
+
+        print(
+            "python tools/generate_mcqs.py "
+            "INPUT.txt OUTPUT.pdf [DDMMYYYY]"
+        )
+
+        raise SystemExit(1)
+
+    input_path = Path(
+        sys.argv[1]
+    )
+
+    output_path = Path(
+        sys.argv[2]
+    )
+
+    date_value = (
+        sys.argv[3]
+        if len(sys.argv) > 3
+        else ""
+    )
+
+    input_text = (
+        input_path
+        .read_text(
+            encoding="utf-8"
+        )
+    )
+
+    generated = generate_mcq_pdf(
+        input_text,
+        output_path=output_path,
+        yymmdd_str=date_value,
+    )
+
+    print(
+        f"Generated: {generated}"
+    )
